@@ -1,0 +1,573 @@
+import discord
+from discord import app_commands
+from discord.ext import commands
+from datetime import datetime, timedelta
+from data.equipment import CATEGORIES, get_items_for_category
+
+
+# Time period choices for history commands
+class TimePeriod:
+    TODAY = "today"
+    WEEK = "week"
+    MONTH = "month"
+    ALL = "all"
+
+
+class CategorySelect(discord.ui.Select):
+    """Dropdown for selecting equipment category."""
+
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=category, value=category)
+            for category in CATEGORIES
+        ]
+        super().__init__(
+            placeholder="Select a category...",
+            options=options,
+            custom_id="category_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        category = self.values[0]
+        view = ItemSelectView(category)
+        await interaction.response.edit_message(
+            content=f"**Category:** {category}\nNow select an item:",
+            view=view,
+        )
+
+
+class CategorySelectView(discord.ui.View):
+    """View containing the category dropdown."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(CategorySelect())
+
+
+class ItemSelect(discord.ui.Select):
+    """Dropdown for selecting specific equipment item."""
+
+    def __init__(self, category: str):
+        self.category = category
+        items = get_items_for_category(category)
+        options = [
+            discord.SelectOption(label=item, value=item)
+            for item in items[:25]  # Discord limit is 25 options
+        ]
+        super().__init__(
+            placeholder="Select an item...",
+            options=options,
+            custom_id="item_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        item = self.values[0]
+        modal = RequestModal(self.category, item)
+        await interaction.response.send_modal(modal)
+
+
+class ItemSelectView(discord.ui.View):
+    """View containing the item dropdown."""
+
+    def __init__(self, category: str):
+        super().__init__(timeout=300)
+        self.add_item(ItemSelect(category))
+
+
+class RequestModal(discord.ui.Modal):
+    """Modal form for entering request details."""
+
+    def __init__(self, category: str, item: str):
+        super().__init__(title="Equipment Requisition")
+        self.category = category
+        self.item = item
+
+        self.quantity = discord.ui.TextInput(
+            label="Quantity",
+            placeholder="Enter quantity (1-99)",
+            default="1",
+            max_length=2,
+            required=True,
+        )
+        self.add_item(self.quantity)
+
+        self.character_name = discord.ui.TextInput(
+            label="Character Name",
+            placeholder="Your in-game character name",
+            max_length=50,
+            required=True,
+        )
+        self.add_item(self.character_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Validate quantity
+        try:
+            qty = int(self.quantity.value)
+            if qty < 1 or qty > 99:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid quantity. Please enter a number between 1 and 99.",
+                ephemeral=True,
+            )
+            return
+
+        # Get database from bot
+        db = interaction.client.db
+
+        # Create the request
+        request_id = await db.create_request(
+            requester_id=interaction.user.id,
+            requester_name=str(interaction.user),
+            character_name=self.character_name.value,
+            category=self.category,
+            item_name=self.item,
+            quantity=qty,
+        )
+
+        # Create embed for the request
+        embed = discord.Embed(
+            title="New Equipment Requisition",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="Request ID", value=f"#{request_id}", inline=True)
+        embed.add_field(name="Item", value=self.item, inline=True)
+        embed.add_field(name="Quantity", value=str(qty), inline=True)
+        embed.add_field(name="Category", value=self.category, inline=True)
+        embed.add_field(name="Character", value=self.character_name.value, inline=True)
+        embed.add_field(name="Requested By", value=interaction.user.mention, inline=True)
+        embed.set_footer(text="Use /claim to fulfill this request")
+
+        # Send confirmation to user
+        await interaction.response.send_message(
+            f"Your requisition for **{qty}x {self.item}** has been submitted! (ID: #{request_id})",
+            ephemeral=True,
+        )
+
+        # Post to announcement channel if configured
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings["announcement_channel_id"]:
+            channel = interaction.guild.get_channel(settings["announcement_channel_id"])
+            if channel:
+                await channel.send(embed=embed)
+
+
+class RequisitionCog(commands.Cog):
+    """Cog for handling requisition commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @app_commands.command(name="request", description="Create a new equipment requisition")
+    async def request(self, interaction: discord.Interaction):
+        """Open the requisition form with category selection."""
+        view = CategorySelectView()
+        await interaction.response.send_message(
+            "**Equipment Requisition**\nSelect a category to begin:",
+            view=view,
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="my-requests", description="View your pending and active requests")
+    async def my_requests(self, interaction: discord.Interaction):
+        """View the user's own requests."""
+        db = self.bot.db
+        requests = await db.get_user_requests(interaction.user.id)
+
+        if not requests:
+            await interaction.response.send_message(
+                "You have no pending or active requests.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="Your Requisitions",
+            color=discord.Color.blue(),
+        )
+
+        for req in requests[:10]:  # Limit to 10 to avoid embed limits
+            status_emoji = "⏳" if req["status"] == "pending" else "🔨"
+            crafter_info = f" (Crafter: {req['crafter_name']})" if req["crafter_name"] else ""
+            embed.add_field(
+                name=f"{status_emoji} #{req['id']} - {req['item_name']}",
+                value=f"Qty: {req['quantity']} | Character: {req['character_name']}{crafter_info}",
+                inline=False,
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="cancel", description="Cancel your own pending request")
+    @app_commands.describe(request_id="The ID of the request to cancel")
+    async def cancel(self, interaction: discord.Interaction, request_id: int):
+        """Cancel a user's own pending request."""
+        db = self.bot.db
+        success = await db.cancel_request(request_id, interaction.user.id)
+
+        if success:
+            await interaction.response.send_message(
+                f"Request #{request_id} has been cancelled.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Could not cancel request #{request_id}. Make sure it exists, belongs to you, and is still pending.",
+                ephemeral=True,
+            )
+
+    @app_commands.command(name="queue", description="View all pending requisitions (Crafter only)")
+    async def queue(self, interaction: discord.Interaction):
+        """View all pending requests. Requires Crafter role."""
+        db = self.bot.db
+
+        # Check for crafter role
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings["crafter_role_id"]:
+            role = interaction.guild.get_role(settings["crafter_role_id"])
+            if role and role not in interaction.user.roles:
+                await interaction.response.send_message(
+                    "You need the Crafter role to use this command.",
+                    ephemeral=True,
+                )
+                return
+
+        requests = await db.get_pending_requests()
+
+        if not requests:
+            await interaction.response.send_message(
+                "No pending requisitions in the queue.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="Pending Requisitions",
+            description="Use `/claim <id>` to claim a request",
+            color=discord.Color.orange(),
+        )
+
+        for req in requests[:15]:  # Limit to 15
+            embed.add_field(
+                name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
+                value=f"Character: {req['character_name']} | By: {req['requester_name']}",
+                inline=False,
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="claim", description="Claim a pending request to fulfill (Crafter only)")
+    @app_commands.describe(request_id="The ID of the request to claim")
+    async def claim(self, interaction: discord.Interaction, request_id: int):
+        """Claim a request to fulfill."""
+        db = self.bot.db
+
+        # Check for crafter role
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings["crafter_role_id"]:
+            role = interaction.guild.get_role(settings["crafter_role_id"])
+            if role and role not in interaction.user.roles:
+                await interaction.response.send_message(
+                    "You need the Crafter role to use this command.",
+                    ephemeral=True,
+                )
+                return
+
+        success = await db.claim_request(request_id, interaction.user.id, str(interaction.user))
+
+        if success:
+            request = await db.get_request(request_id)
+            await interaction.response.send_message(
+                f"You have claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Could not claim request #{request_id}. It may not exist or already be claimed.",
+                ephemeral=True,
+            )
+
+    @app_commands.command(name="unclaim", description="Release a claimed request (Crafter only)")
+    @app_commands.describe(request_id="The ID of the request to unclaim")
+    async def unclaim(self, interaction: discord.Interaction, request_id: int):
+        """Release a claimed request back to the queue."""
+        db = self.bot.db
+        success = await db.unclaim_request(request_id, interaction.user.id)
+
+        if success:
+            await interaction.response.send_message(
+                f"Request #{request_id} has been released back to the queue.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Could not unclaim request #{request_id}. Make sure it exists and you have it claimed.",
+                ephemeral=True,
+            )
+
+    @app_commands.command(name="complete", description="Mark a claimed request as completed (Crafter only)")
+    @app_commands.describe(request_id="The ID of the request to complete")
+    async def complete(self, interaction: discord.Interaction, request_id: int):
+        """Mark a request as completed and notify the requester."""
+        db = self.bot.db
+        request = await db.complete_request(request_id, interaction.user.id)
+
+        if request:
+            await interaction.response.send_message(
+                f"Request #{request_id} has been marked as completed!",
+                ephemeral=True,
+            )
+
+            # Try to DM the requester
+            try:
+                requester = await self.bot.fetch_user(request["requester_id"])
+                embed = discord.Embed(
+                    title="Requisition Completed!",
+                    description=f"Your request for **{request['quantity']}x {request['item_name']}** has been fulfilled!",
+                    color=discord.Color.green(),
+                )
+                embed.add_field(name="Character", value=request["character_name"], inline=True)
+                embed.add_field(name="Crafter", value=str(interaction.user), inline=True)
+                await requester.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                pass  # User has DMs disabled or other error
+        else:
+            await interaction.response.send_message(
+                f"Could not complete request #{request_id}. Make sure it exists and you have it claimed.",
+                ephemeral=True,
+            )
+
+    @app_commands.command(name="my-claims", description="View your claimed requests (Crafter only)")
+    async def my_claims(self, interaction: discord.Interaction):
+        """View requests claimed by the crafter."""
+        db = self.bot.db
+        requests = await db.get_claimed_requests(interaction.user.id)
+
+        if not requests:
+            await interaction.response.send_message(
+                "You have no claimed requests.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="Your Claimed Requests",
+            description="Use `/complete <id>` when finished",
+            color=discord.Color.purple(),
+        )
+
+        for req in requests[:10]:
+            embed.add_field(
+                name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
+                value=f"Character: {req['character_name']} | By: {req['requester_name']}",
+                inline=False,
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    def _get_date_range(self, period: str) -> tuple[datetime | None, datetime | None]:
+        """Convert a time period string to start/end datetime."""
+        now = datetime.utcnow()
+        end_date = now
+
+        if period == TimePeriod.TODAY:
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == TimePeriod.WEEK:
+            start_date = now - timedelta(days=7)
+        elif period == TimePeriod.MONTH:
+            start_date = now - timedelta(days=30)
+        else:  # ALL
+            start_date = None
+            end_date = None
+
+        return start_date, end_date
+
+    @app_commands.command(name="history", description="View completed requisitions history")
+    @app_commands.describe(
+        period="Time period to view",
+        show_details="Show individual requests instead of just totals"
+    )
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Today", value="today"),
+        app_commands.Choice(name="Last 7 days", value="week"),
+        app_commands.Choice(name="Last 30 days", value="month"),
+        app_commands.Choice(name="All time", value="all"),
+    ])
+    async def history(
+        self,
+        interaction: discord.Interaction,
+        period: str = "week",
+        show_details: bool = False
+    ):
+        """View completed requisitions history with totals."""
+        db = self.bot.db
+        start_date, end_date = self._get_date_range(period)
+
+        period_labels = {
+            "today": "Today",
+            "week": "Last 7 Days",
+            "month": "Last 30 Days",
+            "all": "All Time"
+        }
+        period_label = period_labels.get(period, period)
+
+        if show_details:
+            # Show individual completed requests
+            requests = await db.get_completed_requests(start_date, end_date)
+
+            if not requests:
+                await interaction.response.send_message(
+                    f"No completed requisitions found for {period_label}.",
+                    ephemeral=True,
+                )
+                return
+
+            embed = discord.Embed(
+                title=f"Completed Requisitions - {period_label}",
+                color=discord.Color.green(),
+            )
+
+            for req in requests[:15]:
+                completed_str = req['completed_at'][:10] if req['completed_at'] else "N/A"
+                embed.add_field(
+                    name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
+                    value=f"For: {req['character_name']} ({req['requester_name']})\nCrafter: {req['crafter_name']} | {completed_str}",
+                    inline=False,
+                )
+
+            if len(requests) > 15:
+                embed.set_footer(text=f"Showing 15 of {len(requests)} requests")
+
+        else:
+            # Show totals per requester
+            totals = await db.get_requester_totals(start_date, end_date)
+
+            if not totals:
+                await interaction.response.send_message(
+                    f"No completed requisitions found for {period_label}.",
+                    ephemeral=True,
+                )
+                return
+
+            embed = discord.Embed(
+                title=f"Requisition Totals by Requester - {period_label}",
+                color=discord.Color.green(),
+            )
+
+            total_items = 0
+            total_requests = 0
+            for entry in totals[:20]:
+                embed.add_field(
+                    name=f"{entry['character_name']}",
+                    value=f"{entry['total_items']} items ({entry['request_count']} requests)\n{entry['requester_name']}",
+                    inline=True,
+                )
+                total_items += entry['total_items']
+                total_requests += entry['request_count']
+
+            embed.set_footer(text=f"Total: {total_items} items across {total_requests} requests")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="crafter-stats", description="View crafter production statistics")
+    @app_commands.describe(period="Time period to view")
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Today", value="today"),
+        app_commands.Choice(name="Last 7 days", value="week"),
+        app_commands.Choice(name="Last 30 days", value="month"),
+        app_commands.Choice(name="All time", value="all"),
+    ])
+    async def crafter_stats(self, interaction: discord.Interaction, period: str = "week"):
+        """View statistics for crafters."""
+        db = self.bot.db
+        start_date, end_date = self._get_date_range(period)
+
+        period_labels = {
+            "today": "Today",
+            "week": "Last 7 Days",
+            "month": "Last 30 Days",
+            "all": "All Time"
+        }
+        period_label = period_labels.get(period, period)
+
+        totals = await db.get_crafter_totals(start_date, end_date)
+
+        if not totals:
+            await interaction.response.send_message(
+                f"No completed requisitions found for {period_label}.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"Crafter Leaderboard - {period_label}",
+            color=discord.Color.gold(),
+        )
+
+        total_items = 0
+        for i, entry in enumerate(totals[:10], 1):
+            medal = ""
+            if i == 1:
+                medal = " :first_place:"
+            elif i == 2:
+                medal = " :second_place:"
+            elif i == 3:
+                medal = " :third_place:"
+
+            embed.add_field(
+                name=f"#{i} {entry['crafter_name']}{medal}",
+                value=f"{entry['total_items']} items ({entry['request_count']} requests)",
+                inline=False,
+            )
+            total_items += entry['total_items']
+
+        embed.set_footer(text=f"Total crafted: {total_items} items")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="item-stats", description="View most requested items")
+    @app_commands.describe(period="Time period to view")
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Today", value="today"),
+        app_commands.Choice(name="Last 7 days", value="week"),
+        app_commands.Choice(name="Last 30 days", value="month"),
+        app_commands.Choice(name="All time", value="all"),
+    ])
+    async def item_stats(self, interaction: discord.Interaction, period: str = "week"):
+        """View most requested items."""
+        db = self.bot.db
+        start_date, end_date = self._get_date_range(period)
+
+        period_labels = {
+            "today": "Today",
+            "week": "Last 7 Days",
+            "month": "Last 30 Days",
+            "all": "All Time"
+        }
+        period_label = period_labels.get(period, period)
+
+        totals = await db.get_item_totals(start_date, end_date)
+
+        if not totals:
+            await interaction.response.send_message(
+                f"No completed requisitions found for {period_label}.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"Most Requested Items - {period_label}",
+            color=discord.Color.blue(),
+        )
+
+        for entry in totals[:15]:
+            embed.add_field(
+                name=f"{entry['item_name']}",
+                value=f"{entry['total_quantity']} crafted ({entry['request_count']} requests)\n*{entry['category']}*",
+                inline=True,
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(RequisitionCog(bot))
