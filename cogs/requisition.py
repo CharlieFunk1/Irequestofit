@@ -61,8 +61,8 @@ async def update_queue_message(bot, guild):
                 claimed_text = ""
 
             embed.add_field(
-                name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']}\nPlastanium: {plast}\nSpice Melange: {spice}\nClaimed: {claimed_text}",
+                name=f"**#{req['id']}** - {req['item_name']} x{req['quantity']}",
+                value=f"**Character:** {req['character_name']}\n**Plastanium:** {plast}\n**Spice Melange:** {spice}\n**Claimed:** {claimed_text}",
                 inline=False,
             )
 
@@ -879,8 +879,8 @@ class RequisitionCog(commands.Cog):
                 claimed_text = ""
 
             embed.add_field(
-                name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']}\nPlastanium: {plast}\nSpice Melange: {spice}\nClaimed: {claimed_text}",
+                name=f"**#{req['id']}** - {req['item_name']} x{req['quantity']}",
+                value=f"**Character:** {req['character_name']}\n**Plastanium:** {plast}\n**Spice Melange:** {spice}\n**Claimed:** {claimed_text}",
                 inline=False,
             )
 
