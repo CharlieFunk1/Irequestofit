@@ -699,6 +699,16 @@ class RequisitionCog(commands.Cog):
                 f"You have claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}{costs}",
                 ephemeral=True,
             )
+
+            # Post notification to announcement channel
+            settings = await db.get_guild_settings(interaction.guild_id)
+            if settings and settings.get("announcement_channel_id"):
+                channel = interaction.guild.get_channel(settings["announcement_channel_id"])
+                if channel:
+                    await channel.send(
+                        f"{interaction.user.mention} has claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}"
+                    )
+
             # Update auto-updating queue
             await update_queue_message(self.bot, interaction.guild)
         else:
