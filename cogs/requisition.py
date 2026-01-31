@@ -2,7 +2,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
+import os
 from data.equipment import CATEGORIES, get_items_for_category, get_item_costs
+
+# Path to guild logo image
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "guildlogo.png")
 
 
 # Time period choices for history commands
@@ -160,6 +164,9 @@ class RequestModal(discord.ui.Modal):
 
         embed.set_footer(text="Use /claim to fulfill this request")
 
+        # Add guild logo as thumbnail
+        embed.set_thumbnail(url="attachment://guildlogo.png")
+
         # Send confirmation to user
         cost_info = ""
         if total_plastanium > 0 or total_spice > 0:
@@ -175,7 +182,8 @@ class RequestModal(discord.ui.Modal):
         if settings and settings["announcement_channel_id"]:
             channel = interaction.guild.get_channel(settings["announcement_channel_id"])
             if channel:
-                await channel.send(embed=embed)
+                file = discord.File(LOGO_PATH, filename="guildlogo.png")
+                await channel.send(embed=embed, file=file)
 
 
 class RequisitionCog(commands.Cog):
@@ -292,7 +300,10 @@ class RequisitionCog(commands.Cog):
         if total_plastanium > 0 or total_spice > 0:
             embed.set_footer(text=f"Total materials needed: {total_plastanium} Plastanium, {total_spice} Spice")
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Add guild logo as thumbnail
+        embed.set_thumbnail(url="attachment://guildlogo.png")
+        file = discord.File(LOGO_PATH, filename="guildlogo.png")
+        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
 
     @app_commands.command(name="claim", description="Claim a pending request to fulfill (Crafter only)")
     @app_commands.describe(request_id="The ID of the request to claim")
