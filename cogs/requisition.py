@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
-from data.equipment import CATEGORIES, get_items_for_category
+from data.equipment import CATEGORIES, get_items_for_category, get_item_costs
 
 
 # Time period choices for history commands
@@ -20,6 +20,7 @@ class CategorySelect(discord.ui.Select):
         options = [
             discord.SelectOption(label=category, value=category)
             for category in CATEGORIES
+            if get_items_for_category(category)  # Only show categories with items
         ]
         super().__init__(
             placeholder="Select a category...",
@@ -50,10 +51,15 @@ class ItemSelect(discord.ui.Select):
     def __init__(self, category: str):
         self.category = category
         items = get_items_for_category(category)
-        options = [
-            discord.SelectOption(label=item, value=item)
-            for item in items[:25]  # Discord limit is 25 options
-        ]
+        options = []
+        for item in items[:25]:  # Discord limit is 25 options
+            plastanium, spice = get_item_costs(category, item)
+            if plastanium > 0 or spice > 0:
+                description = f"Cost: {plastanium} Plastanium, {spice} Spice"
+            else:
+                description = "Cost: Not set"
+            options.append(discord.SelectOption(label=item, value=item, description=description))
+
         super().__init__(
             placeholder="Select an item...",
             options=options,
@@ -115,6 +121,11 @@ class RequestModal(discord.ui.Modal):
         # Get database from bot
         db = interaction.client.db
 
+        # Get item costs
+        plastanium, spice = get_item_costs(self.category, self.item)
+        total_plastanium = plastanium * qty
+        total_spice = spice * qty
+
         # Create the request
         request_id = await db.create_request(
             requester_id=interaction.user.id,
@@ -123,6 +134,8 @@ class RequestModal(discord.ui.Modal):
             category=self.category,
             item_name=self.item,
             quantity=qty,
+            plastanium_cost=plastanium,
+            spice_cost=spice,
         )
 
         # Create embed for the request
@@ -136,11 +149,24 @@ class RequestModal(discord.ui.Modal):
         embed.add_field(name="Category", value=self.category, inline=True)
         embed.add_field(name="Character", value=self.character_name.value, inline=True)
         embed.add_field(name="Requested By", value=interaction.user.mention, inline=True)
+
+        # Add material costs if set
+        if total_plastanium > 0 or total_spice > 0:
+            embed.add_field(
+                name="Materials Required",
+                value=f"Plastanium: {total_plastanium}\nSpice Melange: {total_spice}",
+                inline=False,
+            )
+
         embed.set_footer(text="Use /claim to fulfill this request")
 
         # Send confirmation to user
+        cost_info = ""
+        if total_plastanium > 0 or total_spice > 0:
+            cost_info = f"\nMaterials: {total_plastanium} Plastanium, {total_spice} Spice"
+
         await interaction.response.send_message(
-            f"Your requisition for **{qty}x {self.item}** has been submitted! (ID: #{request_id})",
+            f"Your requisition for **{qty}x {self.item}** has been submitted! (ID: #{request_id}){cost_info}",
             ephemeral=True,
         )
 
@@ -189,9 +215,12 @@ class RequisitionCog(commands.Cog):
         for req in requests[:10]:  # Limit to 10 to avoid embed limits
             status_emoji = "⏳" if req["status"] == "pending" else "🔨"
             crafter_info = f" (Crafter: {req['crafter_name']})" if req["crafter_name"] else ""
+            costs = ""
+            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
+                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
             embed.add_field(
                 name=f"{status_emoji} #{req['id']} - {req['item_name']}",
-                value=f"Qty: {req['quantity']} | Character: {req['character_name']}{crafter_info}",
+                value=f"Qty: {req['quantity']} | Character: {req['character_name']}{crafter_info}{costs}",
                 inline=False,
             )
 
@@ -246,12 +275,22 @@ class RequisitionCog(commands.Cog):
             color=discord.Color.orange(),
         )
 
+        total_plastanium = 0
+        total_spice = 0
         for req in requests[:15]:  # Limit to 15
+            costs = ""
+            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
+                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
+                total_plastanium += req.get("plastanium_cost", 0)
+                total_spice += req.get("spice_cost", 0)
             embed.add_field(
                 name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']} | By: {req['requester_name']}",
+                value=f"Character: {req['character_name']} | By: {req['requester_name']}{costs}",
                 inline=False,
             )
+
+        if total_plastanium > 0 or total_spice > 0:
+            embed.set_footer(text=f"Total materials needed: {total_plastanium} Plastanium, {total_spice} Spice")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -276,8 +315,11 @@ class RequisitionCog(commands.Cog):
 
         if success:
             request = await db.get_request(request_id)
+            costs = ""
+            if request.get("plastanium_cost", 0) > 0 or request.get("spice_cost", 0) > 0:
+                costs = f"\nMaterials: {request.get('plastanium_cost', 0)} Plastanium, {request.get('spice_cost', 0)} Spice"
             await interaction.response.send_message(
-                f"You have claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}",
+                f"You have claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}{costs}",
                 ephemeral=True,
             )
         else:
@@ -355,12 +397,22 @@ class RequisitionCog(commands.Cog):
             color=discord.Color.purple(),
         )
 
+        total_plastanium = 0
+        total_spice = 0
         for req in requests[:10]:
+            costs = ""
+            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
+                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
+                total_plastanium += req.get("plastanium_cost", 0)
+                total_spice += req.get("spice_cost", 0)
             embed.add_field(
                 name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']} | By: {req['requester_name']}",
+                value=f"Character: {req['character_name']} | By: {req['requester_name']}{costs}",
                 inline=False,
             )
+
+        if total_plastanium > 0 or total_spice > 0:
+            embed.set_footer(text=f"Total materials: {total_plastanium} Plastanium, {total_spice} Spice")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -410,6 +462,9 @@ class RequisitionCog(commands.Cog):
         }
         period_label = period_labels.get(period, period)
 
+        # Get material totals
+        material_totals = await db.get_material_totals(start_date, end_date)
+
         if show_details:
             # Show individual completed requests
             requests = await db.get_completed_requests(start_date, end_date)
@@ -427,15 +482,20 @@ class RequisitionCog(commands.Cog):
             )
 
             for req in requests[:15]:
-                completed_str = req['completed_at'][:10] if req['completed_at'] else "N/A"
+                completed_str = str(req['completed_at'])[:10] if req['completed_at'] else "N/A"
+                costs = ""
+                if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
+                    costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
                 embed.add_field(
                     name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                    value=f"For: {req['character_name']} ({req['requester_name']})\nCrafter: {req['crafter_name']} | {completed_str}",
+                    value=f"For: {req['character_name']} ({req['requester_name']})\nCrafter: {req['crafter_name']} | {completed_str}{costs}",
                     inline=False,
                 )
 
+            footer_text = f"Total Materials: {material_totals['total_plastanium']} Plastanium, {material_totals['total_spice']} Spice"
             if len(requests) > 15:
-                embed.set_footer(text=f"Showing 15 of {len(requests)} requests")
+                footer_text = f"Showing 15 of {len(requests)} requests | " + footer_text
+            embed.set_footer(text=footer_text)
 
         else:
             # Show totals per requester
@@ -456,15 +516,17 @@ class RequisitionCog(commands.Cog):
             total_items = 0
             total_requests = 0
             for entry in totals[:20]:
+                plast = entry.get('total_plastanium', 0) or 0
+                spice = entry.get('total_spice', 0) or 0
                 embed.add_field(
                     name=f"{entry['character_name']}",
-                    value=f"{entry['total_items']} items ({entry['request_count']} requests)\n{entry['requester_name']}",
+                    value=f"{entry['total_items']} items ({entry['request_count']} requests)\n{plast} Plast, {spice} Spice\n{entry['requester_name']}",
                     inline=True,
                 )
                 total_items += entry['total_items']
                 total_requests += entry['request_count']
 
-            embed.set_footer(text=f"Total: {total_items} items across {total_requests} requests")
+            embed.set_footer(text=f"Total: {total_items} items | {material_totals['total_plastanium']} Plastanium, {material_totals['total_spice']} Spice")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -504,6 +566,8 @@ class RequisitionCog(commands.Cog):
         )
 
         total_items = 0
+        total_plastanium = 0
+        total_spice = 0
         for i, entry in enumerate(totals[:10], 1):
             medal = ""
             if i == 1:
@@ -513,14 +577,18 @@ class RequisitionCog(commands.Cog):
             elif i == 3:
                 medal = " :third_place:"
 
+            plast = entry.get('total_plastanium', 0) or 0
+            spice = entry.get('total_spice', 0) or 0
             embed.add_field(
                 name=f"#{i} {entry['crafter_name']}{medal}",
-                value=f"{entry['total_items']} items ({entry['request_count']} requests)",
+                value=f"{entry['total_items']} items ({entry['request_count']} requests)\n{plast} Plast, {spice} Spice",
                 inline=False,
             )
             total_items += entry['total_items']
+            total_plastanium += plast
+            total_spice += spice
 
-        embed.set_footer(text=f"Total crafted: {total_items} items")
+        embed.set_footer(text=f"Total: {total_items} items | {total_plastanium} Plastanium, {total_spice} Spice")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -559,12 +627,61 @@ class RequisitionCog(commands.Cog):
             color=discord.Color.blue(),
         )
 
+        total_plastanium = 0
+        total_spice = 0
         for entry in totals[:15]:
+            plast = entry.get('total_plastanium', 0) or 0
+            spice = entry.get('total_spice', 0) or 0
             embed.add_field(
                 name=f"{entry['item_name']}",
-                value=f"{entry['total_quantity']} crafted ({entry['request_count']} requests)\n*{entry['category']}*",
+                value=f"{entry['total_quantity']} crafted ({entry['request_count']} requests)\n{plast} Plast, {spice} Spice\n*{entry['category']}*",
                 inline=True,
             )
+            total_plastanium += plast
+            total_spice += spice
+
+        embed.set_footer(text=f"Total Materials: {total_plastanium} Plastanium, {total_spice} Spice")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="material-stats", description="View total materials used")
+    @app_commands.describe(period="Time period to view")
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Today", value="today"),
+        app_commands.Choice(name="Last 7 days", value="week"),
+        app_commands.Choice(name="Last 30 days", value="month"),
+        app_commands.Choice(name="All time", value="all"),
+    ])
+    async def material_stats(self, interaction: discord.Interaction, period: str = "week"):
+        """View total material usage statistics."""
+        db = self.bot.db
+        start_date, end_date = self._get_date_range(period)
+
+        period_labels = {
+            "today": "Today",
+            "week": "Last 7 Days",
+            "month": "Last 30 Days",
+            "all": "All Time"
+        }
+        period_label = period_labels.get(period, period)
+
+        totals = await db.get_material_totals(start_date, end_date)
+
+        embed = discord.Embed(
+            title=f"Material Usage - {period_label}",
+            color=discord.Color.orange(),
+        )
+
+        embed.add_field(
+            name="Plastanium Ingots",
+            value=f"{totals['total_plastanium']}",
+            inline=True,
+        )
+        embed.add_field(
+            name="Spice Melange",
+            value=f"{totals['total_spice']}",
+            inline=True,
+        )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

@@ -14,6 +14,7 @@ class Database:
         self._connection = await aiosqlite.connect(self.db_path)
         self._connection.row_factory = aiosqlite.Row
         await self._create_tables()
+        await self._migrate_tables()
 
     async def close(self):
         """Close database connection."""
@@ -31,6 +32,8 @@ class Database:
                 category TEXT NOT NULL,
                 item_name TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
+                plastanium_cost INTEGER DEFAULT 0,
+                spice_cost INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'pending',
                 crafter_id INTEGER,
                 crafter_name TEXT,
@@ -48,6 +51,24 @@ class Database:
         """)
         await self._connection.commit()
 
+    async def _migrate_tables(self):
+        """Add new columns to existing tables if they don't exist."""
+        try:
+            await self._connection.execute(
+                "ALTER TABLE requests ADD COLUMN plastanium_cost INTEGER DEFAULT 0"
+            )
+            await self._connection.commit()
+        except:
+            pass  # Column already exists
+
+        try:
+            await self._connection.execute(
+                "ALTER TABLE requests ADD COLUMN spice_cost INTEGER DEFAULT 0"
+            )
+            await self._connection.commit()
+        except:
+            pass  # Column already exists
+
     # Request operations
     async def create_request(
         self,
@@ -57,14 +78,20 @@ class Database:
         category: str,
         item_name: str,
         quantity: int,
+        plastanium_cost: int = 0,
+        spice_cost: int = 0,
     ) -> int:
         """Create a new requisition request. Returns the request ID."""
+        # Multiply costs by quantity
+        total_plastanium = plastanium_cost * quantity
+        total_spice = spice_cost * quantity
+
         cursor = await self._connection.execute(
             """
-            INSERT INTO requests (requester_id, requester_name, character_name, category, item_name, quantity)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO requests (requester_id, requester_name, character_name, category, item_name, quantity, plastanium_cost, spice_cost)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (requester_id, requester_name, character_name, category, item_name, quantity),
+            (requester_id, requester_name, character_name, category, item_name, quantity, total_plastanium, total_spice),
         )
         await self._connection.commit()
         return cursor.lastrowid
@@ -252,7 +279,9 @@ class Database:
                 """
                 SELECT requester_id, requester_name, character_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 AND completed_at >= ? AND completed_at <= ?
@@ -266,7 +295,9 @@ class Database:
                 """
                 SELECT requester_id, requester_name, character_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed' AND completed_at >= ?
                 GROUP BY requester_id, character_name
@@ -279,7 +310,9 @@ class Database:
                 """
                 SELECT requester_id, requester_name, character_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 GROUP BY requester_id, character_name
@@ -300,7 +333,9 @@ class Database:
                 """
                 SELECT crafter_id, crafter_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 AND completed_at >= ? AND completed_at <= ?
@@ -314,7 +349,9 @@ class Database:
                 """
                 SELECT crafter_id, crafter_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed' AND completed_at >= ?
                 GROUP BY crafter_id
@@ -327,7 +364,9 @@ class Database:
                 """
                 SELECT crafter_id, crafter_name,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_items
+                       SUM(quantity) as total_items,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 GROUP BY crafter_id
@@ -348,7 +387,9 @@ class Database:
                 """
                 SELECT item_name, category,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_quantity
+                       SUM(quantity) as total_quantity,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 AND completed_at >= ? AND completed_at <= ?
@@ -362,7 +403,9 @@ class Database:
                 """
                 SELECT item_name, category,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_quantity
+                       SUM(quantity) as total_quantity,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed' AND completed_at >= ?
                 GROUP BY item_name
@@ -375,7 +418,9 @@ class Database:
                 """
                 SELECT item_name, category,
                        COUNT(*) as request_count,
-                       SUM(quantity) as total_quantity
+                       SUM(quantity) as total_quantity,
+                       SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
                 FROM requests
                 WHERE status = 'completed'
                 GROUP BY item_name
@@ -384,3 +429,45 @@ class Database:
             )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    async def get_material_totals(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict:
+        """Get total plastanium and spice used within a time range."""
+        if start_date and end_date:
+            cursor = await self._connection.execute(
+                """
+                SELECT SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
+                FROM requests
+                WHERE status = 'completed'
+                AND completed_at >= ? AND completed_at <= ?
+                """,
+                (start_date, end_date),
+            )
+        elif start_date:
+            cursor = await self._connection.execute(
+                """
+                SELECT SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
+                FROM requests
+                WHERE status = 'completed' AND completed_at >= ?
+                """,
+                (start_date,),
+            )
+        else:
+            cursor = await self._connection.execute(
+                """
+                SELECT SUM(plastanium_cost) as total_plastanium,
+                       SUM(spice_cost) as total_spice
+                FROM requests
+                WHERE status = 'completed'
+                """
+            )
+        row = await cursor.fetchone()
+        return {
+            "total_plastanium": row["total_plastanium"] or 0,
+            "total_spice": row["total_spice"] or 0,
+        }
