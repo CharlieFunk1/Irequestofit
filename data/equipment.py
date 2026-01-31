@@ -28,6 +28,13 @@ FULL_SETS = {
         ("Executor's Helmet", "Armor Sets"),
         ("Executor's Chestpiece", "Armor Sets"),
     ],
+    "Pincushion Set (Full)": [
+        ("Pincushion Boots", "Armor Sets"),
+        ("Pincushion Pants", "Armor Sets"),
+        ("Pincushion Gloves", "Armor Sets"),
+        ("Pincushion Helmet", "Armor Sets"),
+        ("Pincushion Chestpiece", "Armor Sets"),
+    ],
 }
 
 EQUIPMENT = {
@@ -50,13 +57,19 @@ EQUIPMENT = {
         "Executor's Gloves": (35, 41),   # Estimated based on pattern
         "Executor's Helmet": (50, 62),
         "Executor's Chestpiece": (65, 83),
+        # Pincushion Set (Light Armor)
+        "Pincushion Boots": (30, 53),
+        "Pincushion Pants": (40, 74),
+        "Pincushion Gloves": (22, 41),
+        "Pincushion Helmet": (35, 62),
+        "Pincushion Chestpiece": (45, 83),
     },
     "Individual Armor": {
         "Circuit Gauntlets": (35, 41),   # Estimated (gloves pattern)
         "Power Harness": (65, 83),
         "Desert Garb": (45, 83),
         "Hook-claw Gloves": (35, 41),    # Estimated (gloves pattern)
-        "Yueh's Reaper Gloves": (35, 41),# Estimated (gloves pattern)
+        "Yueh's Reaper Gloves": (35, 41), # Estimated (gloves pattern)
         "Fortress Chestpiece": (65, 83), # Estimated (chest pattern)
         "Seeker Helmet": (50, 62),       # Estimated (helmet pattern)
         "Wayfinder Helm": (50, 62),      # Estimated (helmet pattern)
@@ -64,7 +77,7 @@ EQUIPMENT = {
         "Tabr Softstep Boots": (30, 53),
         "Adrenal Boots": (40, 53),       # Estimated (boots pattern)
         "Idaho's Charge": (45, 83),
-        "The Baron's Bloodbag": (55, 83),# Estimated (utility pattern)
+        "The Baron's Bloodbag": (55, 83), # Estimated (utility pattern)
     },
     "Vehicle Components": {
         # Standard Buggy Mk6 Parts (estimates based on similar items)
@@ -78,10 +91,30 @@ EQUIPMENT = {
         "Buggy Tread Mk6": (60, 90),
         "Buggy Cutteray Mk6": (100, 150),
         "Buggy Rocket Launcher Mk6": (120, 180),
+        # Standard Scout Ornithopter Parts
+        "Scout Ornithopter Chassis MK6": (70, 55),
+        "Scout Ornithopter Cockpit MK6": (85, 55),
+        "Scout Ornithopter Engine MK6": (60, 54),
+        "Scout Ornithopter Generator MK6": (60, 54),
+        "Scout Ornithopter Hull MK6": (85, 55),
+        "Scout Ornithopter Rocket Launcher MK6": (85, 81),
+        "Scout Ornithopter Thrusters MK6": (95, 81),
+        "Scout Ornithopter Wing MK6": (15, 14),
+        # Standard Assault Ornithopter Chassis MK6
+        "Assault Ornithopter Chassis MK6": (70, 55),
+        "Assault Ornithopter Cockpit MK6": (85, 55),
+        "Assault Ornithopter Engine MK6": (60, 54),
+        "Assault Ornithopter Generator MK6": (60, 54),
+        "Assault Ornithopter Cabin MK6": (85, 55),
+        "Assault Ornithopter Tail MK6": (85, 55),
+        "Assault Ornithopter Rocket Launcher MK6": (85, 81),
+        "Assault Ornithopter Thruster MK6": (95, 81),
+        "Assault Ornithopter Wing MK6": (10, 9),
         # Unique Vehicle Parts
         "Rattler Boost Module": (80, 120),
-        "Bluddshot Buggy Engine": (100, 186),
-        "Focused Buggy Cutteray": (130, 162),
+        "Bluddshot Buggy Engine MK6": (100, 186),
+        "Focused Buggy Cutteray MK6": (130, 162),
+        "Bigger Buggy Boot MK6": (100, 186),
     },
     "Tools": {
         "Impure Extractor Mk6": (55, 83),
