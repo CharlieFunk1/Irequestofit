@@ -927,7 +927,7 @@ class RequisitionCog(commands.Cog):
                 channel = interaction.guild.get_channel(settings["announcement_channel_id"])
                 if channel:
                     await channel.send(
-                        f"<@{request['requester_id']}> - {interaction.user.mention} has claimed your request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}"
+                        f"{interaction.user.mention} has claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']} - <@{request['requester_id']}>"
                     )
 
             # Update auto-updating queue
