@@ -285,7 +285,7 @@ class RequisitionCog(commands.Cog):
                 total_spice += req.get("spice_cost", 0)
             embed.add_field(
                 name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']} | By: {req['requester_name']}{costs}",
+                value=f"Character: {req['character_name']} | By: <@{req['requester_id']}>{costs}",
                 inline=False,
             )
 
