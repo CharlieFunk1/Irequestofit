@@ -35,13 +35,13 @@ async def update_queue_message(bot, guild):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass  # Message already deleted or can't delete
 
-    # Get pending requests
-    requests = await db.get_pending_requests()
+    # Get active requests (pending and claimed)
+    requests = await db.get_active_requests()
 
     # Build the queue embed
     embed = discord.Embed(
-        title="Pending Requisitions Queue",
-        description="Use `/claim <id>` to claim a request" if requests else "No pending requests",
+        title="Requisitions Queue",
+        description="Use `/claim <id>` to claim a request" if requests else "No active requests",
         color=discord.Color.orange(),
     )
 
@@ -49,14 +49,20 @@ async def update_queue_message(bot, guild):
         total_plastanium = 0
         total_spice = 0
         for req in requests[:15]:  # Limit to 15
-            costs = ""
-            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
-                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
-                total_plastanium += req.get("plastanium_cost", 0)
-                total_spice += req.get("spice_cost", 0)
+            plast = req.get("plastanium_cost", 0)
+            spice = req.get("spice_cost", 0)
+            total_plastanium += plast
+            total_spice += spice
+
+            # Build claimed status
+            if req.get("crafter_id"):
+                claimed_text = f"<@{req['crafter_id']}>"
+            else:
+                claimed_text = ""
+
             embed.add_field(
                 name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']} | By: <@{req['requester_id']}>{costs}",
+                value=f"Character: {req['character_name']}\nPlastanium: {plast}\nSpice Melange: {spice}\nClaimed: {claimed_text}",
                 inline=False,
             )
 
@@ -64,7 +70,7 @@ async def update_queue_message(bot, guild):
             embed.set_footer(text=f"Total materials needed: {total_plastanium} Plastanium, {total_spice} Spice")
 
         if len(requests) > 15:
-            embed.description = f"Showing 15 of {len(requests)} pending requests. Use `/claim <id>` to claim."
+            embed.description = f"Showing 15 of {len(requests)} active requests. Use `/claim <id>` to claim."
 
     # Add guild logo as thumbnail
     embed.set_thumbnail(url="attachment://guildlogo.png")
@@ -843,17 +849,17 @@ class RequisitionCog(commands.Cog):
                 )
                 return
 
-        requests = await db.get_pending_requests()
+        requests = await db.get_active_requests()
 
         if not requests:
             await interaction.response.send_message(
-                "No pending requisitions in the queue.",
+                "No active requisitions in the queue.",
                 ephemeral=True,
             )
             return
 
         embed = discord.Embed(
-            title="Pending Requisitions",
+            title="Requisitions Queue",
             description="Use `/claim <id>` to claim a request",
             color=discord.Color.orange(),
         )
@@ -861,14 +867,20 @@ class RequisitionCog(commands.Cog):
         total_plastanium = 0
         total_spice = 0
         for req in requests[:15]:  # Limit to 15
-            costs = ""
-            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
-                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
-                total_plastanium += req.get("plastanium_cost", 0)
-                total_spice += req.get("spice_cost", 0)
+            plast = req.get("plastanium_cost", 0)
+            spice = req.get("spice_cost", 0)
+            total_plastanium += plast
+            total_spice += spice
+
+            # Build claimed status
+            if req.get("crafter_id"):
+                claimed_text = f"<@{req['crafter_id']}>"
+            else:
+                claimed_text = ""
+
             embed.add_field(
                 name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
-                value=f"Character: {req['character_name']} | By: <@{req['requester_id']}>{costs}",
+                value=f"Character: {req['character_name']}\nPlastanium: {plast}\nSpice Melange: {spice}\nClaimed: {claimed_text}",
                 inline=False,
             )
 

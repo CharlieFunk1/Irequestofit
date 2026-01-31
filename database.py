@@ -153,6 +153,18 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_active_requests(self) -> list[dict]:
+        """Get all active requests (pending and claimed)."""
+        cursor = await self._connection.execute(
+            """
+            SELECT * FROM requests
+            WHERE status IN ('pending', 'claimed')
+            ORDER BY created_at ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def get_claimed_requests(self, crafter_id: int) -> list[dict]:
         """Get all requests claimed by a specific crafter."""
         cursor = await self._connection.execute(
