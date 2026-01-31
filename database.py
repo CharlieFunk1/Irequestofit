@@ -161,6 +161,31 @@ class Database:
         await self._connection.commit()
         return cursor.rowcount > 0
 
+    async def update_request(
+        self,
+        request_id: int,
+        user_id: int,
+        category: str,
+        item_name: str,
+        quantity: int,
+        plastanium_cost: int,
+        spice_cost: int,
+    ) -> bool:
+        """Update a pending request. Returns True if successful."""
+        total_plastanium = plastanium_cost * quantity
+        total_spice = spice_cost * quantity
+
+        cursor = await self._connection.execute(
+            """
+            UPDATE requests
+            SET category = ?, item_name = ?, quantity = ?, plastanium_cost = ?, spice_cost = ?
+            WHERE id = ? AND requester_id = ? AND status = 'pending'
+            """,
+            (category, item_name, quantity, total_plastanium, total_spice, request_id, user_id),
+        )
+        await self._connection.commit()
+        return cursor.rowcount > 0
+
     async def claim_request(self, request_id: int, crafter_id: int, crafter_name: str) -> bool:
         """Claim a pending request. Returns True if successful."""
         cursor = await self._connection.execute(

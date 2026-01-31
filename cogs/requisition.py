@@ -298,6 +298,137 @@ class RequestModalQuick(discord.ui.Modal):
                 await channel.send(content=f"{role_mention}New requisition request!", embed=embed, file=file)
 
 
+class EditCategorySelect(discord.ui.Select):
+    """Dropdown for selecting category when editing a request."""
+
+    def __init__(self, request_id: int):
+        self.request_id = request_id
+        options = [
+            discord.SelectOption(label=category, value=category)
+            for category in CATEGORIES
+            if get_items_for_category(category)
+        ]
+        super().__init__(
+            placeholder="Select a category...",
+            options=options,
+            custom_id="edit_category_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        category = self.values[0]
+        view = EditItemSelectView(self.request_id, category)
+        await interaction.response.edit_message(
+            content=f"**Editing Request #{self.request_id}**\n**Category:** {category}\nNow select an item:",
+            view=view,
+        )
+
+
+class EditCategorySelectView(discord.ui.View):
+    """View for category selection when editing."""
+
+    def __init__(self, request_id: int):
+        super().__init__(timeout=300)
+        self.add_item(EditCategorySelect(request_id))
+
+
+class EditItemSelect(discord.ui.Select):
+    """Dropdown for selecting item when editing a request."""
+
+    def __init__(self, request_id: int, category: str):
+        self.request_id = request_id
+        self.category = category
+        items = get_items_for_category(category)
+        options = []
+        for item in items[:25]:
+            plastanium, spice = get_item_costs(category, item)
+            if plastanium > 0 or spice > 0:
+                description = f"Cost: {plastanium} Plastanium, {spice} Spice"
+            else:
+                description = "Cost: Not set"
+            options.append(discord.SelectOption(label=item, value=item, description=description))
+
+        super().__init__(
+            placeholder="Select an item...",
+            options=options,
+            custom_id="edit_item_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        item = self.values[0]
+        modal = EditRequestModal(self.request_id, self.category, item)
+        await interaction.response.send_modal(modal)
+
+
+class EditItemSelectView(discord.ui.View):
+    """View for item selection when editing."""
+
+    def __init__(self, request_id: int, category: str):
+        super().__init__(timeout=300)
+        self.add_item(EditItemSelect(request_id, category))
+
+
+class EditRequestModal(discord.ui.Modal):
+    """Modal for editing request quantity."""
+
+    def __init__(self, request_id: int, category: str, item: str):
+        super().__init__(title=f"Edit Request #{request_id}")
+        self.request_id = request_id
+        self.category = category
+        self.item = item
+
+        self.quantity = discord.ui.TextInput(
+            label="Quantity",
+            placeholder="Enter quantity (1-99)",
+            default="1",
+            max_length=2,
+            required=True,
+        )
+        self.add_item(self.quantity)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            qty = int(self.quantity.value)
+            if qty < 1 or qty > 99:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid quantity. Please enter a number between 1 and 99.",
+                ephemeral=True,
+            )
+            return
+
+        db = interaction.client.db
+
+        plastanium, spice = get_item_costs(self.category, self.item)
+
+        success = await db.update_request(
+            request_id=self.request_id,
+            user_id=interaction.user.id,
+            category=self.category,
+            item_name=self.item,
+            quantity=qty,
+            plastanium_cost=plastanium,
+            spice_cost=spice,
+        )
+
+        if success:
+            total_plastanium = plastanium * qty
+            total_spice = spice * qty
+            cost_info = ""
+            if total_plastanium > 0 or total_spice > 0:
+                cost_info = f"\nMaterials: {total_plastanium} Plastanium, {total_spice} Spice"
+
+            await interaction.response.send_message(
+                f"Request #{self.request_id} has been updated to **{qty}x {self.item}**!{cost_info}",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Could not update request #{self.request_id}. Make sure it still exists and is pending.",
+                ephemeral=True,
+            )
+
+
 class RequisitionCog(commands.Cog):
     """Cog for handling requisition commands."""
 
@@ -374,6 +505,41 @@ class RequisitionCog(commands.Cog):
                 f"Could not cancel request #{request_id}. Make sure it exists, belongs to you, and is still pending.",
                 ephemeral=True,
             )
+
+    @app_commands.command(name="edit-request", description="Edit your own pending request")
+    @app_commands.describe(request_id="The ID of the request to edit")
+    async def edit_request(self, interaction: discord.Interaction, request_id: int):
+        """Edit a user's own pending request."""
+        db = self.bot.db
+        request = await db.get_request(request_id)
+
+        if not request:
+            await interaction.response.send_message(
+                f"Request #{request_id} not found.",
+                ephemeral=True,
+            )
+            return
+
+        if request["requester_id"] != interaction.user.id:
+            await interaction.response.send_message(
+                f"Request #{request_id} does not belong to you.",
+                ephemeral=True,
+            )
+            return
+
+        if request["status"] != "pending":
+            await interaction.response.send_message(
+                f"Request #{request_id} cannot be edited because it is {request['status']}.",
+                ephemeral=True,
+            )
+            return
+
+        view = EditCategorySelectView(request_id)
+        await interaction.response.send_message(
+            f"**Editing Request #{request_id}**\nCurrent: {request['quantity']}x {request['item_name']}\n\nSelect a new category:",
+            view=view,
+            ephemeral=True,
+        )
 
     @app_commands.command(name="queue", description="View all pending requisitions (Crafter only)")
     async def queue(self, interaction: discord.Interaction):
