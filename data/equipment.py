@@ -5,6 +5,31 @@ Data sourced from: https://www.magicstark.cz/en/dune-awakening-wiki/
 Format: "Item Name": (plastanium_cost, spice_cost)
 """
 
+# Full armor sets - maps set name to list of (item_name, category) tuples
+FULL_SETS = {
+    "The Forge Set (Full)": [
+        ("The Forge Boots", "Armor Sets"),
+        ("The Forge Pants", "Armor Sets"),
+        ("The Forge Gloves", "Armor Sets"),
+        ("The Forge Helmet", "Armor Sets"),
+        ("The Forge Chestpiece", "Armor Sets"),
+    ],
+    "Bulwark Set (Full)": [
+        ("Bulwark Boots", "Armor Sets"),
+        ("Bulwark Leggings", "Armor Sets"),
+        ("Bulwark Gloves", "Armor Sets"),
+        ("Bulwark Helmet", "Armor Sets"),
+        ("Bulwark Chest", "Armor Sets"),
+    ],
+    "Executor's Set (Full)": [
+        ("Executor's Boots", "Armor Sets"),
+        ("Executor's Pants", "Armor Sets"),
+        ("Executor's Gloves", "Armor Sets"),
+        ("Executor's Helmet", "Armor Sets"),
+        ("Executor's Chestpiece", "Armor Sets"),
+    ],
+}
+
 EQUIPMENT = {
     "Armor Sets": {
         # The Forge Set (Light Armor)
@@ -83,3 +108,25 @@ def get_item_costs(category: str, item_name: str) -> tuple[int, int]:
     """Get (plastanium, spice) costs for an item. Returns (0, 0) if not found."""
     items = EQUIPMENT.get(category, {})
     return items.get(item_name, (0, 0))
+
+
+def get_full_sets() -> list[str]:
+    """Get list of full armor set names."""
+    return list(FULL_SETS.keys())
+
+
+def get_set_items(set_name: str) -> list[tuple[str, str]]:
+    """Get list of (item_name, category) tuples for a full set."""
+    return FULL_SETS.get(set_name, [])
+
+
+def get_set_total_costs(set_name: str) -> tuple[int, int]:
+    """Get total (plastanium, spice) costs for a full set."""
+    items = FULL_SETS.get(set_name, [])
+    total_plastanium = 0
+    total_spice = 0
+    for item_name, category in items:
+        plast, spice = get_item_costs(category, item_name)
+        total_plastanium += plast
+        total_spice += spice
+    return total_plastanium, total_spice

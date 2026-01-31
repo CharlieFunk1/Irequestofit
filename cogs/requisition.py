@@ -3,7 +3,10 @@ from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
 import os
-from data.equipment import CATEGORIES, get_items_for_category, get_item_costs
+from data.equipment import (
+    CATEGORIES, get_items_for_category, get_item_costs,
+    get_full_sets, get_set_items, get_set_total_costs
+)
 
 # Path to guild logo image
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "guildlogo.png")
@@ -92,6 +95,12 @@ class CategorySelect(discord.ui.Select):
             for category in CATEGORIES
             if get_items_for_category(category)  # Only show categories with items
         ]
+        # Add Full Armor Sets option at the beginning
+        options.insert(0, discord.SelectOption(
+            label="Full Armor Sets",
+            value="Full Armor Sets",
+            description="Request a complete armor set"
+        ))
         super().__init__(
             placeholder="Select a category...",
             options=options,
@@ -100,11 +109,18 @@ class CategorySelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
-        view = ItemSelectView(category)
-        await interaction.response.edit_message(
-            content=f"**Category:** {category}\nNow select an item:",
-            view=view,
-        )
+        if category == "Full Armor Sets":
+            view = FullSetSelectView()
+            await interaction.response.edit_message(
+                content="**Full Armor Sets**\nSelect a set to request all pieces:",
+                view=view,
+            )
+        else:
+            view = ItemSelectView(category)
+            await interaction.response.edit_message(
+                content=f"**Category:** {category}\nNow select an item:",
+                view=view,
+            )
 
 
 class CategorySelectView(discord.ui.View):
@@ -113,6 +129,199 @@ class CategorySelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
         self.add_item(CategorySelect())
+
+
+class FullSetSelect(discord.ui.Select):
+    """Dropdown for selecting a full armor set."""
+
+    def __init__(self):
+        options = []
+        for set_name in get_full_sets():
+            plast, spice = get_set_total_costs(set_name)
+            options.append(discord.SelectOption(
+                label=set_name,
+                value=set_name,
+                description=f"Total: {plast} Plastanium, {spice} Spice"
+            ))
+        super().__init__(
+            placeholder="Select an armor set...",
+            options=options,
+            custom_id="full_set_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        set_name = self.values[0]
+        db = interaction.client.db
+        saved_name = await db.get_character_name(interaction.user.id)
+        if saved_name:
+            modal = FullSetModalQuick(set_name, saved_name)
+        else:
+            modal = FullSetModal(set_name)
+        await interaction.response.send_modal(modal)
+
+
+class FullSetSelectView(discord.ui.View):
+    """View containing the full set dropdown."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        self.add_item(FullSetSelect())
+
+
+class FullSetModal(discord.ui.Modal):
+    """Modal for requesting a full armor set (first time users)."""
+
+    def __init__(self, set_name: str):
+        super().__init__(title=f"Request {set_name}")
+        self.set_name = set_name
+
+        self.character_name = discord.ui.TextInput(
+            label="Character Name (saved for future requests)",
+            placeholder="Your in-game character name",
+            max_length=50,
+            required=True,
+        )
+        self.add_item(self.character_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        db = interaction.client.db
+        await db.set_character_name(interaction.user.id, self.character_name.value)
+
+        items = get_set_items(self.set_name)
+        request_ids = []
+        total_plastanium = 0
+        total_spice = 0
+
+        for item_name, category in items:
+            plast, spice = get_item_costs(category, item_name)
+            total_plastanium += plast
+            total_spice += spice
+            request_id = await db.create_request(
+                requester_id=interaction.user.id,
+                requester_name=interaction.user.display_name,
+                character_name=self.character_name.value,
+                category=category,
+                item_name=item_name,
+                quantity=1,
+                plastanium_cost=plast,
+                spice_cost=spice,
+            )
+            request_ids.append(request_id)
+
+        # Create embed for the set request
+        embed = discord.Embed(
+            title="New Full Set Requisition",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="Request IDs", value=", ".join(f"#{rid}" for rid in request_ids), inline=False)
+        embed.add_field(name="Set", value=self.set_name, inline=True)
+        embed.add_field(name="Pieces", value=str(len(items)), inline=True)
+        embed.add_field(name="Character", value=self.character_name.value, inline=True)
+        embed.add_field(name="Requested By", value=interaction.user.mention, inline=True)
+        embed.add_field(
+            name="Total Materials",
+            value=f"Plastanium: {total_plastanium}\nSpice Melange: {total_spice}",
+            inline=False,
+        )
+        embed.set_footer(text="Use /claim to fulfill individual pieces")
+        embed.set_thumbnail(url="attachment://guildlogo.png")
+
+        await interaction.response.send_message(
+            f"Your requisition for **{self.set_name}** ({len(items)} pieces) has been submitted!\nRequest IDs: {', '.join(f'#{rid}' for rid in request_ids)}\nTotal Materials: {total_plastanium} Plastanium, {total_spice} Spice",
+            ephemeral=True,
+        )
+
+        # Post to announcement channel
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings.get("announcement_channel_id"):
+            channel = interaction.guild.get_channel(settings["announcement_channel_id"])
+            if channel:
+                file = discord.File(LOGO_PATH, filename="guildlogo.png")
+                role_mention = ""
+                if settings.get("crafter_role_id"):
+                    role_mention = f"<@&{settings['crafter_role_id']}> "
+                await channel.send(content=f"{role_mention}New full set requisition!", embed=embed, file=file)
+
+        await update_queue_message(interaction.client, interaction.guild)
+
+
+class FullSetModalQuick(discord.ui.Modal):
+    """Modal for requesting a full armor set (returning users)."""
+
+    def __init__(self, set_name: str, character_name: str):
+        super().__init__(title=f"Request {set_name}")
+        self.set_name = set_name
+        self.saved_character_name = character_name
+
+        # Just a confirmation field
+        self.confirm = discord.ui.TextInput(
+            label=f"Confirm request for {character_name}",
+            placeholder="Type 'yes' to confirm",
+            default="yes",
+            max_length=10,
+            required=True,
+        )
+        self.add_item(self.confirm)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        db = interaction.client.db
+
+        items = get_set_items(self.set_name)
+        request_ids = []
+        total_plastanium = 0
+        total_spice = 0
+
+        for item_name, category in items:
+            plast, spice = get_item_costs(category, item_name)
+            total_plastanium += plast
+            total_spice += spice
+            request_id = await db.create_request(
+                requester_id=interaction.user.id,
+                requester_name=interaction.user.display_name,
+                character_name=self.saved_character_name,
+                category=category,
+                item_name=item_name,
+                quantity=1,
+                plastanium_cost=plast,
+                spice_cost=spice,
+            )
+            request_ids.append(request_id)
+
+        # Create embed for the set request
+        embed = discord.Embed(
+            title="New Full Set Requisition",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="Request IDs", value=", ".join(f"#{rid}" for rid in request_ids), inline=False)
+        embed.add_field(name="Set", value=self.set_name, inline=True)
+        embed.add_field(name="Pieces", value=str(len(items)), inline=True)
+        embed.add_field(name="Character", value=self.saved_character_name, inline=True)
+        embed.add_field(name="Requested By", value=interaction.user.mention, inline=True)
+        embed.add_field(
+            name="Total Materials",
+            value=f"Plastanium: {total_plastanium}\nSpice Melange: {total_spice}",
+            inline=False,
+        )
+        embed.set_footer(text="Use /claim to fulfill individual pieces")
+        embed.set_thumbnail(url="attachment://guildlogo.png")
+
+        await interaction.response.send_message(
+            f"Your requisition for **{self.set_name}** ({len(items)} pieces) has been submitted!\nRequest IDs: {', '.join(f'#{rid}' for rid in request_ids)}\nTotal Materials: {total_plastanium} Plastanium, {total_spice} Spice",
+            ephemeral=True,
+        )
+
+        # Post to announcement channel
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings.get("announcement_channel_id"):
+            channel = interaction.guild.get_channel(settings["announcement_channel_id"])
+            if channel:
+                file = discord.File(LOGO_PATH, filename="guildlogo.png")
+                role_mention = ""
+                if settings.get("crafter_role_id"):
+                    role_mention = f"<@&{settings['crafter_role_id']}> "
+                await channel.send(content=f"{role_mention}New full set requisition!", embed=embed, file=file)
+
+        await update_queue_message(interaction.client, interaction.guild)
 
 
 class ItemSelect(discord.ui.Select):
