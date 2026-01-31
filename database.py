@@ -49,6 +49,12 @@ class Database:
                 announcement_channel_id INTEGER
             )
         """)
+        await self._connection.execute("""
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id INTEGER PRIMARY KEY,
+                character_name TEXT NOT NULL
+            )
+        """)
         await self._connection.commit()
 
     async def _migrate_tables(self):
@@ -228,6 +234,27 @@ class Database:
             ON CONFLICT(guild_id) DO UPDATE SET announcement_channel_id = ?
             """,
             (guild_id, channel_id, channel_id),
+        )
+        await self._connection.commit()
+
+    # User profile operations
+    async def get_character_name(self, user_id: int) -> Optional[str]:
+        """Get the saved character name for a user."""
+        cursor = await self._connection.execute(
+            "SELECT character_name FROM user_profiles WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row["character_name"] if row else None
+
+    async def set_character_name(self, user_id: int, character_name: str):
+        """Save or update the character name for a user."""
+        await self._connection.execute(
+            """
+            INSERT INTO user_profiles (user_id, character_name)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET character_name = ?
+            """,
+            (user_id, character_name, character_name),
         )
         await self._connection.commit()
 

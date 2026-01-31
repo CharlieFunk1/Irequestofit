@@ -72,7 +72,13 @@ class ItemSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         item = self.values[0]
-        modal = RequestModal(self.category, item)
+        # Check if user has a saved character name
+        db = interaction.client.db
+        saved_name = await db.get_character_name(interaction.user.id)
+        if saved_name:
+            modal = RequestModalQuick(self.category, item, saved_name)
+        else:
+            modal = RequestModal(self.category, item)
         await interaction.response.send_modal(modal)
 
 
@@ -85,7 +91,7 @@ class ItemSelectView(discord.ui.View):
 
 
 class RequestModal(discord.ui.Modal):
-    """Modal form for entering request details."""
+    """Modal form for entering request details (first time users)."""
 
     def __init__(self, category: str, item: str):
         super().__init__(title="Equipment Requisition")
@@ -102,7 +108,7 @@ class RequestModal(discord.ui.Modal):
         self.add_item(self.quantity)
 
         self.character_name = discord.ui.TextInput(
-            label="Character Name",
+            label="Character Name (saved for future requests)",
             placeholder="Your in-game character name",
             max_length=50,
             required=True,
@@ -124,6 +130,9 @@ class RequestModal(discord.ui.Modal):
 
         # Get database from bot
         db = interaction.client.db
+
+        # Save character name for future requests
+        await db.set_character_name(interaction.user.id, self.character_name.value)
 
         # Get item costs
         plastanium, spice = get_item_costs(self.category, self.item)
@@ -186,6 +195,101 @@ class RequestModal(discord.ui.Modal):
                 await channel.send(embed=embed, file=file)
 
 
+class RequestModalQuick(discord.ui.Modal):
+    """Modal form for returning users with saved character name."""
+
+    def __init__(self, category: str, item: str, character_name: str):
+        super().__init__(title="Equipment Requisition")
+        self.category = category
+        self.item = item
+        self.saved_character_name = character_name
+
+        self.quantity = discord.ui.TextInput(
+            label="Quantity",
+            placeholder="Enter quantity (1-99)",
+            default="1",
+            max_length=2,
+            required=True,
+        )
+        self.add_item(self.quantity)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Validate quantity
+        try:
+            qty = int(self.quantity.value)
+            if qty < 1 or qty > 99:
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid quantity. Please enter a number between 1 and 99.",
+                ephemeral=True,
+            )
+            return
+
+        # Get database from bot
+        db = interaction.client.db
+
+        # Get item costs
+        plastanium, spice = get_item_costs(self.category, self.item)
+        total_plastanium = plastanium * qty
+        total_spice = spice * qty
+
+        # Create the request with saved character name
+        request_id = await db.create_request(
+            requester_id=interaction.user.id,
+            requester_name=interaction.user.display_name,
+            character_name=self.saved_character_name,
+            category=self.category,
+            item_name=self.item,
+            quantity=qty,
+            plastanium_cost=plastanium,
+            spice_cost=spice,
+        )
+
+        # Create embed for the request
+        embed = discord.Embed(
+            title="New Equipment Requisition",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="Request ID", value=f"#{request_id}", inline=True)
+        embed.add_field(name="Item", value=self.item, inline=True)
+        embed.add_field(name="Quantity", value=str(qty), inline=True)
+        embed.add_field(name="Category", value=self.category, inline=True)
+        embed.add_field(name="Character", value=self.saved_character_name, inline=True)
+        embed.add_field(name="Requested By", value=interaction.user.mention, inline=True)
+
+        # Add material costs if set
+        if total_plastanium > 0 or total_spice > 0:
+            embed.add_field(
+                name="Materials Required",
+                value=f"Plastanium: {total_plastanium}\nSpice Melange: {total_spice}",
+                inline=False,
+            )
+
+        embed.set_footer(text="Use /claim to fulfill this request")
+
+        # Add guild logo as thumbnail
+        embed.set_thumbnail(url="attachment://guildlogo.png")
+
+        # Send confirmation to user
+        cost_info = ""
+        if total_plastanium > 0 or total_spice > 0:
+            cost_info = f"\nMaterials: {total_plastanium} Plastanium, {total_spice} Spice"
+
+        await interaction.response.send_message(
+            f"Your requisition for **{qty}x {self.item}** has been submitted! (ID: #{request_id}){cost_info}",
+            ephemeral=True,
+        )
+
+        # Post to announcement channel if configured
+        settings = await db.get_guild_settings(interaction.guild_id)
+        if settings and settings["announcement_channel_id"]:
+            channel = interaction.guild.get_channel(settings["announcement_channel_id"])
+            if channel:
+                file = discord.File(LOGO_PATH, filename="guildlogo.png")
+                await channel.send(embed=embed, file=file)
+
+
 class RequisitionCog(commands.Cog):
     """Cog for handling requisition commands."""
 
@@ -199,6 +303,17 @@ class RequisitionCog(commands.Cog):
         await interaction.response.send_message(
             "**Equipment Requisition**\nSelect a category to begin:",
             view=view,
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="set-character", description="Set or update your in-game character name")
+    @app_commands.describe(name="Your in-game character name")
+    async def set_character(self, interaction: discord.Interaction, name: str):
+        """Set or update the user's saved character name."""
+        db = self.bot.db
+        await db.set_character_name(interaction.user.id, name)
+        await interaction.response.send_message(
+            f"Your character name has been set to **{name}**. This will be used for all future requests.",
             ephemeral=True,
         )
 
