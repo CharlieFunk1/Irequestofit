@@ -52,6 +52,27 @@ class AdminCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="clear-queue", description="Cancel all pending requests (Admin only)")
+    @app_commands.default_permissions(administrator=True)
+    async def clear_queue(self, interaction: discord.Interaction):
+        """Clear all pending requests from the queue."""
+        db = self.bot.db
+        count = await db.clear_pending_requests()
+
+        if count > 0:
+            await interaction.response.send_message(
+                f"Cleared {count} pending request(s) from the queue.",
+                ephemeral=True,
+            )
+            # Update auto-updating queue
+            from cogs.requisition import update_queue_message
+            await update_queue_message(self.bot, interaction.guild)
+        else:
+            await interaction.response.send_message(
+                "No pending requests to clear.",
+                ephemeral=True,
+            )
+
     @app_commands.command(name="settings", description="View current bot settings (Admin only)")
     @app_commands.default_permissions(administrator=True)
     async def settings(self, interaction: discord.Interaction):

@@ -179,6 +179,18 @@ class Database:
         await self._connection.commit()
         return cursor.rowcount > 0
 
+    async def clear_pending_requests(self) -> int:
+        """Cancel all pending requests. Returns the number of requests cleared."""
+        cursor = await self._connection.execute(
+            """
+            UPDATE requests
+            SET status = 'cancelled'
+            WHERE status = 'pending'
+            """
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
     async def update_request(
         self,
         request_id: int,
