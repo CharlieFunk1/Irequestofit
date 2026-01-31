@@ -35,6 +35,23 @@ class AdminCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="set-queue-channel", description="Set the channel for auto-updating queue display (Admin only)")
+    @app_commands.describe(channel="The channel where the queue will be automatically posted and updated")
+    @app_commands.default_permissions(administrator=True)
+    async def set_queue_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Set the queue channel for auto-updating queue display."""
+        db = self.bot.db
+        await db.set_queue_channel(interaction.guild_id, channel.id)
+
+        # Post initial queue message
+        from cogs.requisition import update_queue_message
+        await update_queue_message(self.bot, interaction.guild)
+
+        await interaction.response.send_message(
+            f"Queue channel has been set to {channel.mention}. The queue will be automatically updated there.",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="settings", description="View current bot settings (Admin only)")
     @app_commands.default_permissions(administrator=True)
     async def settings(self, interaction: discord.Interaction):
@@ -63,8 +80,16 @@ class AdminCog(commands.Cog):
             else:
                 channel_text = "Not set"
             embed.add_field(name="Announcement Channel", value=channel_text, inline=False)
+
+            # Queue channel
+            if settings.get("queue_channel_id"):
+                queue_channel = interaction.guild.get_channel(settings["queue_channel_id"])
+                queue_text = queue_channel.mention if queue_channel else f"Channel ID: {settings['queue_channel_id']} (not found)"
+            else:
+                queue_text = "Not set"
+            embed.add_field(name="Auto-Update Queue Channel", value=queue_text, inline=False)
         else:
-            embed.description = "No settings configured yet. Use `/set-crafter-role` and `/set-channel` to configure."
+            embed.description = "No settings configured yet. Use `/set-crafter-role`, `/set-channel`, and `/set-queue-channel` to configure."
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

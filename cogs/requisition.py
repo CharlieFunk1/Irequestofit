@@ -9,6 +9,72 @@ from data.equipment import CATEGORIES, get_items_for_category, get_item_costs
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "guildlogo.png")
 
 
+async def update_queue_message(bot, guild):
+    """Update the auto-updating queue message in the configured channel.
+
+    Deletes the old queue message and posts a new one with current pending requests.
+    """
+    db = bot.db
+    settings = await db.get_guild_settings(guild.id)
+
+    if not settings or not settings.get("queue_channel_id"):
+        return  # No queue channel configured
+
+    channel = guild.get_channel(settings["queue_channel_id"])
+    if not channel:
+        return  # Channel not found
+
+    # Try to delete old queue message
+    if settings.get("queue_message_id"):
+        try:
+            old_message = await channel.fetch_message(settings["queue_message_id"])
+            await old_message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass  # Message already deleted or can't delete
+
+    # Get pending requests
+    requests = await db.get_pending_requests()
+
+    # Build the queue embed
+    embed = discord.Embed(
+        title="Pending Requisitions Queue",
+        description="Use `/claim <id>` to claim a request" if requests else "No pending requests",
+        color=discord.Color.orange(),
+    )
+
+    if requests:
+        total_plastanium = 0
+        total_spice = 0
+        for req in requests[:15]:  # Limit to 15
+            costs = ""
+            if req.get("plastanium_cost", 0) > 0 or req.get("spice_cost", 0) > 0:
+                costs = f"\nMaterials: {req.get('plastanium_cost', 0)} Plast, {req.get('spice_cost', 0)} Spice"
+                total_plastanium += req.get("plastanium_cost", 0)
+                total_spice += req.get("spice_cost", 0)
+            embed.add_field(
+                name=f"#{req['id']} - {req['item_name']} x{req['quantity']}",
+                value=f"Character: {req['character_name']} | By: <@{req['requester_id']}>{costs}",
+                inline=False,
+            )
+
+        if total_plastanium > 0 or total_spice > 0:
+            embed.set_footer(text=f"Total materials needed: {total_plastanium} Plastanium, {total_spice} Spice")
+
+        if len(requests) > 15:
+            embed.description = f"Showing 15 of {len(requests)} pending requests. Use `/claim <id>` to claim."
+
+    # Add guild logo as thumbnail
+    embed.set_thumbnail(url="attachment://guildlogo.png")
+
+    # Post new queue message
+    try:
+        file = discord.File(LOGO_PATH, filename="guildlogo.png")
+        new_message = await channel.send(embed=embed, file=file)
+        await db.set_queue_message_id(guild.id, new_message.id)
+    except (discord.Forbidden, discord.HTTPException):
+        pass  # Can't post to channel
+
+
 # Time period choices for history commands
 class TimePeriod:
     TODAY = "today"
@@ -198,6 +264,9 @@ class RequestModal(discord.ui.Modal):
                     role_mention = f"<@&{settings['crafter_role_id']}> "
                 await channel.send(content=f"{role_mention}New requisition request!", embed=embed, file=file)
 
+        # Update auto-updating queue
+        await update_queue_message(interaction.client, interaction.guild)
+
 
 class RequestModalQuick(discord.ui.Modal):
     """Modal form for returning users with saved character name."""
@@ -296,6 +365,9 @@ class RequestModalQuick(discord.ui.Modal):
                 if settings.get("crafter_role_id"):
                     role_mention = f"<@&{settings['crafter_role_id']}> "
                 await channel.send(content=f"{role_mention}New requisition request!", embed=embed, file=file)
+
+        # Update auto-updating queue
+        await update_queue_message(interaction.client, interaction.guild)
 
 
 class EditCategorySelect(discord.ui.Select):
@@ -422,6 +494,9 @@ class EditRequestModal(discord.ui.Modal):
                 f"Request #{self.request_id} has been updated to **{qty}x {self.item}**!{cost_info}",
                 ephemeral=True,
             )
+
+            # Update auto-updating queue
+            await update_queue_message(interaction.client, interaction.guild)
         else:
             await interaction.response.send_message(
                 f"Could not update request #{self.request_id}. Make sure it still exists and is pending.",
@@ -500,6 +575,8 @@ class RequisitionCog(commands.Cog):
                 f"Request #{request_id} has been cancelled.",
                 ephemeral=True,
             )
+            # Update auto-updating queue
+            await update_queue_message(self.bot, interaction.guild)
         else:
             await interaction.response.send_message(
                 f"Could not cancel request #{request_id}. Make sure it exists, belongs to you, and is still pending.",
@@ -622,6 +699,8 @@ class RequisitionCog(commands.Cog):
                 f"You have claimed request #{request_id}: **{request['quantity']}x {request['item_name']}** for {request['character_name']}{costs}",
                 ephemeral=True,
             )
+            # Update auto-updating queue
+            await update_queue_message(self.bot, interaction.guild)
         else:
             await interaction.response.send_message(
                 f"Could not claim request #{request_id}. It may not exist or already be claimed.",
@@ -640,6 +719,8 @@ class RequisitionCog(commands.Cog):
                 f"Request #{request_id} has been released back to the queue.",
                 ephemeral=True,
             )
+            # Update auto-updating queue
+            await update_queue_message(self.bot, interaction.guild)
         else:
             await interaction.response.send_message(
                 f"Could not unclaim request #{request_id}. Make sure it exists and you have it claimed.",
@@ -672,6 +753,9 @@ class RequisitionCog(commands.Cog):
                 await requester.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 pass  # User has DMs disabled or other error
+
+            # Update auto-updating queue (completed requests are removed from pending)
+            await update_queue_message(self.bot, interaction.guild)
         else:
             await interaction.response.send_message(
                 f"Could not complete request #{request_id}. Make sure it exists and you have it claimed.",

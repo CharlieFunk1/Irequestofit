@@ -46,7 +46,9 @@ class Database:
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
                 crafter_role_id INTEGER,
-                announcement_channel_id INTEGER
+                announcement_channel_id INTEGER,
+                queue_channel_id INTEGER,
+                queue_message_id INTEGER
             )
         """)
         await self._connection.execute("""
@@ -70,6 +72,22 @@ class Database:
         try:
             await self._connection.execute(
                 "ALTER TABLE requests ADD COLUMN spice_cost INTEGER DEFAULT 0"
+            )
+            await self._connection.commit()
+        except:
+            pass  # Column already exists
+
+        try:
+            await self._connection.execute(
+                "ALTER TABLE guild_settings ADD COLUMN queue_channel_id INTEGER"
+            )
+            await self._connection.commit()
+        except:
+            pass  # Column already exists
+
+        try:
+            await self._connection.execute(
+                "ALTER TABLE guild_settings ADD COLUMN queue_message_id INTEGER"
             )
             await self._connection.commit()
         except:
@@ -259,6 +277,28 @@ class Database:
             ON CONFLICT(guild_id) DO UPDATE SET announcement_channel_id = ?
             """,
             (guild_id, channel_id, channel_id),
+        )
+        await self._connection.commit()
+
+    async def set_queue_channel(self, guild_id: int, channel_id: int):
+        """Set the queue channel for a guild."""
+        await self._connection.execute(
+            """
+            INSERT INTO guild_settings (guild_id, queue_channel_id)
+            VALUES (?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET queue_channel_id = ?
+            """,
+            (guild_id, channel_id, channel_id),
+        )
+        await self._connection.commit()
+
+    async def set_queue_message_id(self, guild_id: int, message_id: int):
+        """Set the queue message ID for a guild."""
+        await self._connection.execute(
+            """
+            UPDATE guild_settings SET queue_message_id = ? WHERE guild_id = ?
+            """,
+            (message_id, guild_id),
         )
         await self._connection.commit()
 
