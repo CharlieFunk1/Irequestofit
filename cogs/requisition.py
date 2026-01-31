@@ -129,7 +129,7 @@ class RequestModal(discord.ui.Modal):
         # Create the request
         request_id = await db.create_request(
             requester_id=interaction.user.id,
-            requester_name=str(interaction.user),
+            requester_name=interaction.user.display_name,
             character_name=self.character_name.value,
             category=self.category,
             item_name=self.item,
@@ -311,7 +311,7 @@ class RequisitionCog(commands.Cog):
                 )
                 return
 
-        success = await db.claim_request(request_id, interaction.user.id, str(interaction.user))
+        success = await db.claim_request(request_id, interaction.user.id, interaction.user.display_name)
 
         if success:
             request = await db.get_request(request_id)
@@ -368,7 +368,7 @@ class RequisitionCog(commands.Cog):
                     color=discord.Color.green(),
                 )
                 embed.add_field(name="Character", value=request["character_name"], inline=True)
-                embed.add_field(name="Crafter", value=str(interaction.user), inline=True)
+                embed.add_field(name="Crafter", value=interaction.user.display_name, inline=True)
                 await requester.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 pass  # User has DMs disabled or other error
