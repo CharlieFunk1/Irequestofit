@@ -192,7 +192,11 @@ class RequestModal(discord.ui.Modal):
             channel = interaction.guild.get_channel(settings["announcement_channel_id"])
             if channel:
                 file = discord.File(LOGO_PATH, filename="guildlogo.png")
-                await channel.send(embed=embed, file=file)
+                # Mention crafter role if configured
+                role_mention = ""
+                if settings.get("crafter_role_id"):
+                    role_mention = f"<@&{settings['crafter_role_id']}> "
+                await channel.send(content=f"{role_mention}New requisition request!", embed=embed, file=file)
 
 
 class RequestModalQuick(discord.ui.Modal):
@@ -287,7 +291,11 @@ class RequestModalQuick(discord.ui.Modal):
             channel = interaction.guild.get_channel(settings["announcement_channel_id"])
             if channel:
                 file = discord.File(LOGO_PATH, filename="guildlogo.png")
-                await channel.send(embed=embed, file=file)
+                # Mention crafter role if configured
+                role_mention = ""
+                if settings.get("crafter_role_id"):
+                    role_mention = f"<@&{settings['crafter_role_id']}> "
+                await channel.send(content=f"{role_mention}New requisition request!", embed=embed, file=file)
 
 
 class RequisitionCog(commands.Cog):
